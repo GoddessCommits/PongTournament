@@ -380,9 +380,29 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
                     const updatedBracket = bracket.map(m =>
                         m.id === myMatch.id ? { ...m, winner: wName } : m
                     );
-                    update(ref(db, `lobbies/${lobbyId}`), {
-                        bracket: updatedBracket
-                    });
+
+                    // Check if all matches in current round are complete
+                    const allRoundMatchesComplete = updatedBracket.every(m => m.winner !== undefined);
+
+                    if (allRoundMatchesComplete && currentRound < totalRounds - 1 && playerNames.length > 0) {
+                        // Generate next round
+                        const nextRound = generateRoundMatches(playerNames, currentRound + 1);
+                        update(ref(db, `lobbies/${lobbyId}`), {
+                            bracket: nextRound,
+                            currentRound: currentRound + 1
+                        });
+                    } else if (allRoundMatchesComplete) {
+                        // Tournament complete
+                        update(ref(db, `lobbies/${lobbyId}`), {
+                            bracket: updatedBracket,
+                            status: 'COMPLETE'
+                        });
+                    } else {
+                        // Just update bracket
+                        update(ref(db, `lobbies/${lobbyId}`), {
+                            bracket: updatedBracket
+                        });
+                    }
                 }
             }}
         />
