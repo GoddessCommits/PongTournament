@@ -190,11 +190,16 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         // Generate first round of rotating pairs
         const firstRound = generateRoundMatches(names, 0);
 
+        // Calculate total rounds needed for round-robin
+        // With odd players: need N rounds (each player plays N-1 humans + 1 AI)
+        // With even players: need N-1 rounds (each player plays N-1 opponents)
+        const totalRoundsNeeded = names.length;
+
         update(ref(db, `lobbies/${lobbyId}`), {
             bracket: firstRound,
             currentRound: 0,
-            totalRounds: names.length, // Each player should play multiple rounds
-            playerNames: names, // Store original player list
+            totalRounds: totalRoundsNeeded,
+            playerNames: names,
             status: 'STARTED'
         });
     };
