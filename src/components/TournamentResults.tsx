@@ -4,7 +4,7 @@ interface Match {
     p1: string;
     p2: string;
     winner?: string;
-    id: number;
+    id: string;
 }
 
 interface TournamentResultsProps {

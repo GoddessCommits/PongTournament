@@ -7,7 +7,7 @@ import { GameEngine } from '../engine/GameEngine';
 
 interface OnlineManagerProps {
     lobbyId: string;
-    matchId: number;
+    matchId: string;
     playerSide: PlayerSide; // 'LEFT' is Host/Authority, 'RIGHT' is Guest/Peer
     playerName: string;
     opponentName: string;
@@ -26,12 +26,16 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
 }) => {
     // State for scores to pass down to UI
     const [scores, setScores] = useState({ left: 0, right: 0 });
+    const [matchEnded, setMatchEnded] = useState(false);
 
-    // Instantiate Engine ONCE
+    // Instantiate Engine ONCE per match
     const engine = React.useMemo(() => {
+        setMatchEnded(false);
         const newEngine = new GameEngine({
             onScore: (left, right) => setScores({ left, right }),
             onMatchEnd: (winner) => {
+                if (matchEnded) return;
+                setMatchEnded(true);
                 onGameEnd();
                 if (onMatchComplete) onMatchComplete(winner);
             }

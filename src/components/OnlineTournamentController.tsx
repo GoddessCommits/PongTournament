@@ -17,7 +17,7 @@ interface Match {
     p1: string; // Player Name
     p2: string; // Player Name
     winner?: string;
-    id: number;
+    id: string; // Unique ID (e.g. round_X_match_Y)
 }
 
 export const OnlineTournamentController: React.FC<OnlineTournamentControllerProps> = ({
@@ -27,57 +27,50 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     onExit
 }) => {
     const [bracket, setBracket] = useState<Match[]>([]);
-    const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
     const [tournamentWinner, setTournamentWinner] = useState<string | null>(null);
     const [matchJustCompleted, setMatchJustCompleted] = useState<{ winner: PlayerSide, p1: string, p2: string } | null>(null);
     const [currentRound, setCurrentRound] = useState(0);
     const [totalRounds, setTotalRounds] = useState(0);
     const [playerNames, setPlayerNames] = useState<string[]>([]);
     const [roundComplete, setRoundComplete] = useState(false);
-
-    // Handlers (Host Only)
-    // We define this BEFORE the useEffect that uses it.
-    const handleMatchEnd = (winnerName: string) => {
-        if (!isHost) return;
-
-        const currentMatch = bracket[currentMatchIndex];
-        const newBracket = [...bracket];
-        newBracket[currentMatchIndex] = { ...currentMatch, winner: winnerName };
-
-        const allMatchesFinished = newBracket.every(m => m.winner);
-
-        let updates: any = { bracket: newBracket };
-
-        if (allMatchesFinished) {
-            const winners = newBracket.map(m => m.winner!);
-            if (winners.length === 1) {
-                updates.winner = winners[0];
-            } else {
-                // Next Round
-                const nextRoundMatches: Match[] = [];
-                for (let i = 0; i < winners.length; i += 2) {
-                    if (i + 1 < winners.length) {
-                        nextRoundMatches.push({ id: newBracket.length + nextRoundMatches.length, p1: winners[i], p2: winners[i + 1] });
-                    } else {
-                        nextRoundMatches.push({ id: newBracket.length + nextRoundMatches.length, p1: winners[i], p2: "AI Bot (Filler)" });
-                    }
-                }
-                updates.bracket = [...newBracket, ...nextRoundMatches];
-                updates.currentMatchIndex = newBracket.length; // Start of next round
-            }
-        } else {
-            // Find next match?
-            // If we just have a list of matches, we just go +1
-            if (currentMatchIndex + 1 < newBracket.length) {
-                updates.currentMatchIndex = currentMatchIndex + 1;
-            }
-        }
-
-        update(ref(db, `lobbies/${lobbyId}`), updates);
-    };
+    const [completedMatchIds, setCompletedMatchIds] = useState<Set<string>>(new Set());
 
     const [status, setStatus] = useState<'LOBBY' | 'STARTED'>('LOBBY');
     const [players, setPlayers] = useState<{ id: string; name: string }[]>([]);
+
+    const handleMatchEnd = (matchId: string, winnerName: string) => {
+        // Track locally to prevent infinite loop immediately
+        setCompletedMatchIds(prev => new Set(prev).add(matchId));
+
+        const updatedBracket = bracket.map(m =>
+            m.id === matchId ? { ...m, winner: winnerName } : m
+        );
+        setBracket(updatedBracket);
+
+        if (!isHost) return;
+
+        const allRoundMatchesComplete = updatedBracket.every(m => m.winner !== undefined);
+        const gameStateRef = ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate`);
+
+        if (allRoundMatchesComplete && currentRound < totalRounds - 1) {
+            update(ref(db, `lobbies/${lobbyId}`), {
+                bracket: updatedBracket,
+                roundComplete: true
+            });
+            set(gameStateRef, null);
+        } else if (allRoundMatchesComplete) {
+            update(ref(db, `lobbies/${lobbyId}`), {
+                bracket: updatedBracket,
+                status: 'COMPLETE'
+            });
+            set(gameStateRef, null);
+        } else {
+            update(ref(db, `lobbies/${lobbyId}`), {
+                bracket: updatedBracket
+            });
+            set(gameStateRef, null);
+        }
+    };
 
     useEffect(() => {
 
@@ -91,63 +84,59 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             if (val) setStatus(prev => prev !== val ? val : prev);
         });
 
-        // 2. Bracket (Complex object, use stringify check if needed, but separate listener helps)
+        // 2. Bracket
         const bracketUnsub = onValue(ref(db, `lobbies/${lobbyId}/bracket`), (snapshot) => {
             const val = snapshot.val();
-            if (!val) return;
-            setBracket(prev => JSON.stringify(prev) !== JSON.stringify(val) ? val : prev);
+            if (val) {
+                setBracket(prev => JSON.stringify(prev) !== JSON.stringify(val) ? val : prev);
+            }
         });
 
-        // 3. Match Index
-        const matchIndexUnsub = onValue(ref(db, `lobbies/${lobbyId}/currentMatchIndex`), (snapshot) => {
-            const val = snapshot.val();
-            if (typeof val === 'number') setCurrentMatchIndex(prev => prev !== val ? val : prev);
-        });
-
-        // 4. Winner
+        // 3. Winner
         const winnerUnsub = onValue(ref(db, `lobbies/${lobbyId}/winner`), (snapshot) => {
             const val = snapshot.val();
             if (val) setTournamentWinner(prev => prev !== val ? val : prev);
         });
 
-        // 5. Players
+        // 4. Players
         const playersUnsub = onValue(ref(db, `lobbies/${lobbyId}/players`), (snapshot) => {
             const data = snapshot.val();
             if (data) {
                 const pList = Object.values(data) as { name: string }[];
+                // Sort to ensure deterministic order for JSON.stringify comparison
+                pList.sort((a, b) => a.name.localeCompare(b.name));
+
                 const newPlayers = pList.map((p, i) => ({ id: `p${i}`, name: p.name }));
                 setPlayers(prev => JSON.stringify(prev) !== JSON.stringify(newPlayers) ? newPlayers : prev);
             }
         });
 
-        // 6. Current Round
+        // 5. Current Round
         const roundUnsub = onValue(ref(db, `lobbies/${lobbyId}/currentRound`), (snapshot) => {
             const val = snapshot.val();
-            if (typeof val === 'number') setCurrentRound(prev => prev !== val ? val : prev);
+            if (typeof val === 'number') setCurrentRound(val);
         });
 
-        // 7. Total Rounds
+        // 6. Total Rounds
         const totalRoundsUnsub = onValue(ref(db, `lobbies/${lobbyId}/totalRounds`), (snapshot) => {
             const val = snapshot.val();
-            if (typeof val === 'number') setTotalRounds(prev => prev !== val ? val : prev);
+            if (typeof val === 'number') setTotalRounds(val);
         });
 
-        // 8. Player Names
+        // 7. Player Names
         const playerNamesUnsub = onValue(ref(db, `lobbies/${lobbyId}/playerNames`), (snapshot) => {
             const val = snapshot.val();
-            if (val) setPlayerNames(prev => JSON.stringify(prev) !== JSON.stringify(val) ? val : prev);
+            if (val) setPlayerNames(val);
         });
 
-        // 9. Round Complete
+        // 8. Round Complete
         const roundCompleteUnsub = onValue(ref(db, `lobbies/${lobbyId}/roundComplete`), (snapshot) => {
-            const val = snapshot.val();
-            setRoundComplete(val === true);
+            setRoundComplete(snapshot.val() === true);
         });
 
         return () => {
             statusUnsub();
             bracketUnsub();
-            matchIndexUnsub();
             winnerUnsub();
             playersUnsub();
             roundUnsub();
@@ -205,33 +194,40 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     };
 
     // Helper function to generate one round of matches with rotating pairs
+    // Uses the "Circle Method" to ensure everyone plays everyone once without duplicates
     const generateRoundMatches = (playerNames: string[], roundNumber: number): Match[] => {
-        const players = [...playerNames];
-        const matches: Match[] = [];
-
-        // Rotate players for variety (simple rotation based on round number)
-        const rotated = [...players];
-        for (let i = 0; i < roundNumber; i++) {
-            rotated.push(rotated.shift()!);
+        let players = [...playerNames];
+        // If odd, add AI Bot to make it even for the pairing algorithm
+        if (players.length % 2 !== 0) {
+            players.push("AI Bot");
         }
 
-        // Pair players for this round
-        for (let i = 0; i < rotated.length; i += 2) {
-            if (i + 1 < rotated.length) {
-                // Normal pair
-                matches.push({
-                    id: matches.length,
-                    p1: rotated[i],
-                    p2: rotated[i + 1]
-                });
-            } else {
-                // Odd player - faces AI
-                matches.push({
-                    id: matches.length,
-                    p1: rotated[i],
-                    p2: "AI Bot"
-                });
-            }
+        const n = players.length;
+        const matches: Match[] = [];
+        const pivot = players[0];
+        const others = players.slice(1);
+        const m = others.length;
+
+        // Rotate the 'others' part based on round number
+        const rotated = [];
+        for (let i = 0; i < m; i++) {
+            rotated.push(others[(i + roundNumber) % m]);
+        }
+
+        // Pair pivot with the last element of the rotated list
+        matches.push({
+            id: `r${roundNumber}_m0`,
+            p1: pivot,
+            p2: rotated[m - 1]
+        });
+
+        // Pair the rest: rotated[0] vs rotated[m-2], rotated[1] vs rotated[m-3], etc.
+        for (let i = 0; i < (n / 2) - 1; i++) {
+            matches.push({
+                id: `r${roundNumber}_m${i + 1}`,
+                p1: rotated[i],
+                p2: rotated[m - 2 - i]
+            });
         }
 
         return matches;
@@ -249,25 +245,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         });
     };
 
-    // Listen for Match Results (Host Only)
-    // IMPORTANT: This must be before any early returns to comply with Rules of Hooks
-    useEffect(() => {
-        if (!isHost) return;
 
-        const matchResultRef = ref(db, `lobbies/${lobbyId}/matchResult`);
-        const unsubscribe = onValue(matchResultRef, (snapshot) => {
-            const result = snapshot.val();
-            if (result && bracket[currentMatchIndex] && result.matchId === bracket[currentMatchIndex].id) {
-                // Confirm it's for the current match
-                handleMatchEnd(result.winner);
-                // Clear the result to avoid re-trigger
-                set(matchResultRef, null);
-                // Also clear gamestate for next match
-                set(ref(db, `lobbies/${lobbyId}/gamestate`), null);
-            }
-        });
-        return () => unsubscribe();
-    }, [isHost, lobbyId, bracket, currentMatchIndex]); // Dependencies critical
 
     if (status === 'LOBBY') {
         return (
@@ -294,6 +272,18 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
                     <p>Waiting for host to start...</p>
                 )}
                 <div style={{ marginTop: '2rem' }}>
+                    {isHost && (
+                        <button
+                            onClick={() => {
+                                if (confirm('Are you sure? This will wipe all data.')) {
+                                    set(ref(db, `lobbies/${lobbyId}`), null);
+                                }
+                            }}
+                            style={{ background: '#dc3545', marginRight: '1rem' }}
+                        >
+                            Reset Lobby
+                        </button>
+                    )}
                     <button onClick={onExit} style={{ background: '#555' }}>Leave</button>
                 </div>
             </div>
@@ -349,9 +339,14 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         );
     }
 
+    // Reset completed matches when round changes
+    useEffect(() => {
+        setCompletedMatchIds(new Set());
+    }, [currentRound]);
+
     // Find the player's current match (first uncompleted match they're in)
     const myMatch = bracket.find(m =>
-        !m.winner && (m.p1 === playerName || m.p2 === playerName)
+        !m.winner && !completedMatchIds.has(m.id) && (m.p1 === playerName || m.p2 === playerName)
     );
 
     if (!myMatch) {
@@ -368,7 +363,8 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         }
 
         // Player finished their matches but tournament not done - spectate
-        const ongoingMatch = bracket.find(m => !m.winner);
+        // Filter out matches the player just completed locally
+        const ongoingMatch = bracket.find(m => !m.winner && !completedMatchIds.has(m.id));
         if (ongoingMatch) {
             return (
                 <div style={{ textAlign: 'center', marginTop: '2rem' }}>
@@ -431,7 +427,10 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
             // Only P1 (Authority) writes result
             onMatchComplete={(winnerSide: PlayerSide) => {
-                // Show completion screen for this player
+                // IMPORTANT: Both players track this locally to stop the rendering loop immediately
+                setCompletedMatchIds(prev => new Set(prev).add(myMatch.id));
+
+                // Show completion screen locally for visual feedback
                 setMatchJustCompleted({
                     winner: winnerSide,
                     p1: myMatch.p1,
@@ -440,32 +439,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
                 const wName = winnerSide === PlayerSide.LEFT ? myMatch.p1 : myMatch.p2;
                 if (isP1) {
-                    // Update the specific match in the bracket
-                    const updatedBracket = bracket.map(m =>
-                        m.id === myMatch.id ? { ...m, winner: wName } : m
-                    );
-
-                    // Check if all matches in current round are complete
-                    const allRoundMatchesComplete = updatedBracket.every(m => m.winner !== undefined);
-
-                    if (allRoundMatchesComplete && currentRound < totalRounds - 1 && playerNames.length > 0) {
-                        // Round complete - wait for host to start next round
-                        update(ref(db, `lobbies/${lobbyId}`), {
-                            bracket: updatedBracket,
-                            roundComplete: true
-                        });
-                    } else if (allRoundMatchesComplete) {
-                        // Tournament complete
-                        update(ref(db, `lobbies/${lobbyId}`), {
-                            bracket: updatedBracket,
-                            status: 'COMPLETE'
-                        });
-                    } else {
-                        // Just update bracket
-                        update(ref(db, `lobbies/${lobbyId}`), {
-                            bracket: updatedBracket
-                        });
-                    }
+                    handleMatchEnd(myMatch.id, wName);
                 }
             }}
         />

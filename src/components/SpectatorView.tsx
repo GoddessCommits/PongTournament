@@ -5,7 +5,7 @@ import { ScoreDisplay } from './ScoreDisplay';
 
 interface SpectatorViewProps {
     lobbyId: string;
-    matchId: number;
+    matchId: string;
     player1Name: string;
     player2Name: string;
 }
