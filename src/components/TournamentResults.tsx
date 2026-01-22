@@ -4,7 +4,7 @@ interface Match {
     p1: string;
     p2: string;
     winner?: string;
-    id: number;
+    id: string;
 }
 
 interface TournamentResultsProps {
@@ -113,7 +113,7 @@ export const TournamentResults: React.FC<TournamentResultsProps> = ({
                     cursor: 'pointer'
                 }}
             >
-                Return to Lobby
+                Return to Home Page
             </button>
         </div>
     );

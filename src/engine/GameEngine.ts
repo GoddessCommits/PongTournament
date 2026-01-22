@@ -189,7 +189,7 @@ export class GameEngine {
         }
     }
 
-    private endGame(winner: PlayerSide) {
+    public endGame(winner: PlayerSide) {
         this.state = 'ENDED';
         this.stop();
         this.events.onMatchEnd(winner);

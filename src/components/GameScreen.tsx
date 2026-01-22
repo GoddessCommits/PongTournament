@@ -11,6 +11,8 @@ interface GameScreenProps {
     // Hybrid: External engine support
     engine?: GameEngine;
     externalScores?: { left: number; right: number };
+    // For online mode: which side is this player controlling
+    playerSide?: PlayerSide;
 }
 
 export const GameScreen: React.FC<GameScreenProps> = ({
@@ -19,7 +21,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     player1Name = "Player 1",
     player2Name = "Player 2",
     engine: externalEngine,
-    externalScores
+    externalScores,
+    playerSide
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const localEngineRef = useRef<GameEngine | null>(null);
@@ -90,19 +93,29 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         const pressedKeys = new Set<string>();
 
         const updatePaddleVelocity = () => {
-            // Player 1 (Left) - W/S
-            let v1 = 0;
-            if (pressedKeys.has('w')) v1 -= 1;
-            if (pressedKeys.has('s')) v1 += 1;
-            activeEngine.setPaddleVelocity(PlayerSide.LEFT, v1);
+            // In online mode, player controls their assigned side
+            // In local mode, player 1 controls left, player 2 controls right
+            if (playerSide) {
+                // Online mode: control assigned paddle
+                let velocity = 0;
+                if (pressedKeys.has('w') || pressedKeys.has('ArrowUp')) velocity -= 1;
+                if (pressedKeys.has('s') || pressedKeys.has('ArrowDown')) velocity += 1;
+                activeEngine.setPaddleVelocity(playerSide, velocity);
+            } else {
+                // Local mode: traditional controls
+                // Player 1 (Left) - W/S
+                let v1 = 0;
+                if (pressedKeys.has('w')) v1 -= 1;
+                if (pressedKeys.has('s')) v1 += 1;
+                activeEngine.setPaddleVelocity(PlayerSide.LEFT, v1);
 
-            // Player 2 (Right) - Arrows (only if not AI or if controlling right side in online?)
-            // For now, local logic:
-            if (!isAiOpponent) {
-                let v2 = 0;
-                if (pressedKeys.has('ArrowUp')) v2 -= 1;
-                if (pressedKeys.has('ArrowDown')) v2 += 1;
-                activeEngine.setPaddleVelocity(PlayerSide.RIGHT, v2);
+                // Player 2 (Right) - Arrows (only if not AI)
+                if (!isAiOpponent) {
+                    let v2 = 0;
+                    if (pressedKeys.has('ArrowUp')) v2 -= 1;
+                    if (pressedKeys.has('ArrowDown')) v2 += 1;
+                    activeEngine.setPaddleVelocity(PlayerSide.RIGHT, v2);
+                }
             }
         };
 
