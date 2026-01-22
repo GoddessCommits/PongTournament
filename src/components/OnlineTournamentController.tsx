@@ -30,6 +30,9 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
     const [tournamentWinner, setTournamentWinner] = useState<string | null>(null);
     const [matchJustCompleted, setMatchJustCompleted] = useState<{ winner: PlayerSide, p1: string, p2: string } | null>(null);
+    const [currentRound, setCurrentRound] = useState(0);
+    const [totalRounds, setTotalRounds] = useState(0);
+    const [playerNames, setPlayerNames] = useState<string[]>([]);
 
     // Handlers (Host Only)
     // We define this BEFORE the useEffect that uses it.
@@ -116,12 +119,33 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             }
         });
 
+        // 6. Current Round
+        const roundUnsub = onValue(ref(db, `lobbies/${lobbyId}/currentRound`), (snapshot) => {
+            const val = snapshot.val();
+            if (typeof val === 'number') setCurrentRound(prev => prev !== val ? val : prev);
+        });
+
+        // 7. Total Rounds
+        const totalRoundsUnsub = onValue(ref(db, `lobbies/${lobbyId}/totalRounds`), (snapshot) => {
+            const val = snapshot.val();
+            if (typeof val === 'number') setTotalRounds(prev => prev !== val ? val : prev);
+        });
+
+        // 8. Player Names
+        const playerNamesUnsub = onValue(ref(db, `lobbies/${lobbyId}/playerNames`), (snapshot) => {
+            const val = snapshot.val();
+            if (val) setPlayerNames(prev => JSON.stringify(prev) !== JSON.stringify(val) ? val : prev);
+        });
+
         return () => {
             statusUnsub();
             bracketUnsub();
             matchIndexUnsub();
             winnerUnsub();
             playersUnsub();
+            roundUnsub();
+            totalRoundsUnsub();
+            playerNamesUnsub();
         };
     }, [lobbyId]);
 
@@ -149,34 +173,55 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const handleStartTournament = () => {
         if (!isHost) return;
 
-        // Generate Round-Robin Bracket (everyone plays everyone once)
         const names = players.map(p => p.name);
         if (names.length < 2) {
             alert("Need at least 2 players!");
             return;
         }
 
-        // Add AI bot if odd number of players
-        if (names.length % 2 !== 0) {
-            names.push("AI Bot");
+        // Generate first round of rotating pairs
+        const firstRound = generateRoundMatches(names, 0);
+
+        update(ref(db, `lobbies/${lobbyId}`), {
+            bracket: firstRound,
+            currentRound: 0,
+            totalRounds: names.length, // Each player should play multiple rounds
+            playerNames: names, // Store original player list
+            status: 'STARTED'
+        });
+    };
+
+    // Helper function to generate one round of matches with rotating pairs
+    const generateRoundMatches = (playerNames: string[], roundNumber: number): Match[] => {
+        const players = [...playerNames];
+        const matches: Match[] = [];
+
+        // Rotate players for variety (simple rotation based on round number)
+        const rotated = [...players];
+        for (let i = 0; i < roundNumber; i++) {
+            rotated.push(rotated.shift()!);
         }
 
-        // Generate all possible match combinations (round-robin)
-        const roundRobinMatches: Match[] = [];
-        for (let i = 0; i < names.length; i++) {
-            for (let j = i + 1; j < names.length; j++) {
-                roundRobinMatches.push({
-                    id: roundRobinMatches.length,
-                    p1: names[i],
-                    p2: names[j]
+        // Pair players for this round
+        for (let i = 0; i < rotated.length; i += 2) {
+            if (i + 1 < rotated.length) {
+                // Normal pair
+                matches.push({
+                    id: matches.length,
+                    p1: rotated[i],
+                    p2: rotated[i + 1]
+                });
+            } else {
+                // Odd player - faces AI
+                matches.push({
+                    id: matches.length,
+                    p1: rotated[i],
+                    p2: "AI Bot"
                 });
             }
         }
 
-        update(ref(db, `lobbies/${lobbyId}`), {
-            bracket: roundRobinMatches,
-            status: 'STARTED'
-        });
+        return matches;
     };
 
     // Listen for Match Results (Host Only)
