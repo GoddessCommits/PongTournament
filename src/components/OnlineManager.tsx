@@ -147,11 +147,11 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
         }
     }, [engine, lobbyId, matchId, playerSide, opponentName]);
 
-    // Fix name display to match player's perspective
-    // Both players control the LEFT paddle on their screen
-    // So guest (RIGHT) should see their name on left, opponent on right
-    const p1Name = playerName;  // Always show player's name on left (they control left paddle)
-    const p2Name = opponentName; // Always show opponent on right
+    // Display names based on match positions (not player perspective)
+    // P1 is always LEFT in the match, P2 is always RIGHT
+    // This way both players see the same layout
+    const p1Name = playerSide === PlayerSide.LEFT ? playerName : opponentName;
+    const p2Name = playerSide === PlayerSide.LEFT ? opponentName : playerName;
 
     return (
         <GameScreen
