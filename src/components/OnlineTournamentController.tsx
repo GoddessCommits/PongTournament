@@ -154,6 +154,11 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             return;
         }
 
+        // Add AI bot if odd number of players
+        if (names.length % 2 !== 0) {
+            names.push("AI Bot");
+        }
+
         // Generate all possible match combinations (round-robin)
         const roundRobinMatches: Match[] = [];
         for (let i = 0; i < names.length; i++) {
