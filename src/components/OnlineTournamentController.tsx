@@ -201,9 +201,9 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         const firstRound = generateRoundMatches(names, 0);
 
         // Calculate total rounds needed for round-robin
-        // With odd players: need N rounds (each player plays N-1 humans + 1 AI)
-        // With even players: need N-1 rounds (each player plays N-1 opponents)
-        const totalRoundsNeeded = names.length;
+        // With even players: need N-1 rounds
+        // With odd players: AI Bot is added (making it even), so need N rounds
+        const totalRoundsNeeded = names.length % 2 === 0 ? names.length - 1 : names.length;
 
         update(ref(db, `lobbies/${lobbyId}`), {
             bracket: firstRound,
@@ -235,20 +235,21 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             rotated.push(others[(i + roundNumber) % m]);
         }
 
+        // Helper to safely add match with Human as P1
+        const addMatch = (id: string, p1: string, p2: string) => {
+            if (p1 === 'AI Bot') {
+                matches.push({ id, p1: p2, p2: p1 }); // Swap: Human becomes P1
+            } else {
+                matches.push({ id, p1, p2 });
+            }
+        };
+
         // Pair pivot with the last element of the rotated list
-        matches.push({
-            id: `r${roundNumber}_m0`,
-            p1: pivot,
-            p2: rotated[m - 1]
-        });
+        addMatch(`r${roundNumber}_m0`, pivot, rotated[m - 1]);
 
         // Pair the rest: rotated[0] vs rotated[m-2], rotated[1] vs rotated[m-3], etc.
         for (let i = 0; i < (n / 2) - 1; i++) {
-            matches.push({
-                id: `r${roundNumber}_m${i + 1}`,
-                p1: rotated[i],
-                p2: rotated[m - 2 - i]
-            });
+            addMatch(`r${roundNumber}_m${i + 1}`, rotated[i], rotated[m - 2 - i]);
         }
 
         return matches;
@@ -374,6 +375,15 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
 
 
+    if (status === 'COMPLETE') {
+        return (
+            <TournamentResults
+                bracket={bracket}
+                onExit={onExit}
+            />
+        );
+    }
+
     // Find the player's current match (first uncompleted match they're in)
     const myMatch = bracket.find(m =>
         !m.winner && !completedMatchIds.has(m.id) && (m.p1 === playerName || m.p2 === playerName)
@@ -385,22 +395,25 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         const allMatchesComplete = bracket.every(m => m.winner !== undefined);
 
         if (allMatchesComplete) {
-            // If matches are done but 'roundComplete' flag hasn't arrived/been set yet:
-            if (currentRound < totalRounds - 1) {
-                return (
-                    <div style={{ textAlign: 'center', marginTop: '4rem' }}>
-                        <h2>Round Finished!</h2>
-                        <p style={{ color: '#888' }}>Waiting for host to start next round...</p>
-                    </div>
-                );
-            }
-
-            // If it's the last round, then it is Tournament Results
+            // Even if last round, wait for Host to flag 'COMPLETE' status
+            // This prevents premature or stuck screens if sync is lagging
             return (
-                <TournamentResults
-                    bracket={bracket}
-                    onExit={onExit}
-                />
+                <div style={{ textAlign: 'center', marginTop: '4rem' }}>
+                    <h2>Round Finished!</h2>
+                    <p style={{ color: '#888' }}>Waiting for host...</p>
+                    <div style={{ marginTop: '2rem' }}>
+                        <button
+                            onClick={() => {
+                                goOffline(db);
+                                setTimeout(() => goOnline(db), 100);
+                            }}
+                            style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', background: '#555', marginRight: '1rem' }}
+                        >
+                            ⟳ Reconnect
+                        </button>
+                        <button onClick={onExit} style={{ background: '#333' }}>Leave</button>
+                    </div>
+                </div>
             );
         }
 
