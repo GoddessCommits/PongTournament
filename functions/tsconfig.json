@@ -1,15 +1,19 @@
 {
     "compilerOptions": {
-        "module": "commonjs",
-        "noImplicitReturns": true,
-        "noUnusedLocals": true,
-        "outDir": "lib",
-        "sourceMap": true,
-        "strict": true,
-        "target": "es2017"
-    },
-    "compileOnSave": true,
-    "include": [
-        "src"
-    ]
+        "target": "ESNext",
+        "lib": [
+            "DOM",
+            "DOM.Iterable",
+            "ESNext",
+            "ESNext.Disposable"
+        ],
+        "skipLibCheck": true,
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "jsx": "react-jsx",
+        "strict": true
+    }
 }
