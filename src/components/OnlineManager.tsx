@@ -64,7 +64,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                     const dy = Math.abs(engine.ball.y - lastSyncedBall.y);
 
                     if (dx > 2 || dy > 2) { // Threshold in pixels
-                        update(gameStateRef, {
+                        const updates: any = {
                             ball: {
                                 x: engine.ball.x,
                                 y: engine.ball.y,
@@ -73,7 +73,15 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                             },
                             score: engine.scores,
                             paddleLeft: engine.leftPaddle.y
-                        });
+                        };
+
+                        // IMPORTANT: Also sync right paddle if AI is playing
+                        // This allows spectators to see the AI paddle
+                        if (opponentName.includes('AI Bot')) {
+                            updates.paddleRight = engine.rightPaddle.y;
+                        }
+
+                        update(gameStateRef, updates);
 
                         lastSyncedBall = { x: engine.ball.x, y: engine.ball.y };
                     }
