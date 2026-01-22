@@ -5,6 +5,7 @@ import { OnlineManager } from './OnlineManager';
 import { PlayerSide } from '../engine/types';
 import { SpectatorView } from './SpectatorView';
 import { TournamentResults } from './TournamentResults';
+import { MatchCompletionScreen } from './MatchCompletionScreen';
 interface OnlineTournamentControllerProps {
     lobbyId: string;
     playerName: string;
@@ -28,6 +29,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const [bracket, setBracket] = useState<Match[]>([]);
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
     const [tournamentWinner, setTournamentWinner] = useState<string | null>(null);
+    const [matchJustCompleted, setMatchJustCompleted] = useState<{ winner: PlayerSide, p1: string, p2: string } | null>(null);
 
     // Handlers (Host Only)
     // We define this BEFORE the useEffect that uses it.
@@ -289,6 +291,21 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     const isP1 = myMatch.p1 === playerName;
 
+    // Show match completion screen if match just finished
+    if (matchJustCompleted) {
+        return (
+            <MatchCompletionScreen
+                winner={matchJustCompleted.winner}
+                player1Name={matchJustCompleted.p1}
+                player2Name={matchJustCompleted.p2}
+                onContinue={() => {
+                    setMatchJustCompleted(null);
+                    // After countdown, component will re-render and find next match or spectate
+                }}
+            />
+        );
+    }
+
     // Active Player - render their match
     return (
         <OnlineManager
@@ -305,6 +322,13 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
             // Only P1 (Authority) writes result
             onMatchComplete={(winnerSide: PlayerSide) => {
+                // Show completion screen for this player
+                setMatchJustCompleted({
+                    winner: winnerSide,
+                    p1: myMatch.p1,
+                    p2: myMatch.p2
+                });
+
                 const wName = winnerSide === PlayerSide.LEFT ? myMatch.p1 : myMatch.p2;
                 if (isP1) {
                     // Update the specific match in the bracket
