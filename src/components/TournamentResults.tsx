@@ -113,7 +113,7 @@ export const TournamentResults: React.FC<TournamentResultsProps> = ({
                     cursor: 'pointer'
                 }}
             >
-                Return to Lobby
+                Return to Home Page
             </button>
         </div>
     );

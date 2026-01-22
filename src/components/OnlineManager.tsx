@@ -42,10 +42,11 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
         if (opponentName.includes('AI Bot') && playerSide === PlayerSide.LEFT) {
             const aiSide = PlayerSide.RIGHT; // AI is always on right when playing vs host
             newEngine.enableAI(aiSide);
+            console.log('AI enabled for match', matchId, 'opponent:', opponentName);
         }
 
         return newEngine;
-    }, [opponentName, playerSide]); // Added dependencies
+    }, [matchId, opponentName, playerSide]); // Re-create engine when match changes
 
     useEffect(() => {
         if (!engine) return;

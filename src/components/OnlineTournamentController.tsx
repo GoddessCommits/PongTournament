@@ -33,6 +33,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const [currentRound, setCurrentRound] = useState(0);
     const [totalRounds, setTotalRounds] = useState(0);
     const [playerNames, setPlayerNames] = useState<string[]>([]);
+    const [roundComplete, setRoundComplete] = useState(false);
 
     // Handlers (Host Only)
     // We define this BEFORE the useEffect that uses it.
@@ -137,6 +138,12 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             if (val) setPlayerNames(prev => JSON.stringify(prev) !== JSON.stringify(val) ? val : prev);
         });
 
+        // 9. Round Complete
+        const roundCompleteUnsub = onValue(ref(db, `lobbies/${lobbyId}/roundComplete`), (snapshot) => {
+            const val = snapshot.val();
+            setRoundComplete(val === true);
+        });
+
         return () => {
             statusUnsub();
             bracketUnsub();
@@ -146,6 +153,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             roundUnsub();
             totalRoundsUnsub();
             playerNamesUnsub();
+            roundCompleteUnsub();
         };
     }, [lobbyId]);
 
@@ -224,6 +232,18 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         return matches;
     };
 
+    const handleStartNextRound = () => {
+        if (!isHost) return;
+
+        // Generate next round
+        const nextRound = generateRoundMatches(playerNames, currentRound + 1);
+        update(ref(db, `lobbies/${lobbyId}`), {
+            bracket: nextRound,
+            currentRound: currentRound + 1,
+            roundComplete: false
+        });
+    };
+
     // Listen for Match Results (Host Only)
     // IMPORTANT: This must be before any early returns to comply with Rules of Hooks
     useEffect(() => {
@@ -288,6 +308,40 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     if (bracket.length === 0) {
         return <div style={{ textAlign: 'center', marginTop: '2rem' }}>Initializing Bracket...</div>;
+    }
+
+    // Show "Round Complete" screen if waiting for next round
+    if (roundComplete) {
+        return (
+            <div style={{ textAlign: 'center', marginTop: '4rem' }}>
+                <h1 style={{ fontSize: '3rem', color: '#ffd700' }}>
+                    🎉 Round {currentRound + 1} Complete! 🎉
+                </h1>
+                <p style={{ fontSize: '1.5rem', margin: '2rem 0', color: '#888' }}>
+                    All matches finished!
+                </p>
+                {isHost ? (
+                    <button
+                        onClick={handleStartNextRound}
+                        style={{
+                            fontSize: '1.5rem',
+                            padding: '1rem 2rem',
+                            background: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Start Round {currentRound + 2}
+                    </button>
+                ) : (
+                    <p style={{ fontSize: '1.2rem', color: '#646cff' }}>
+                        Waiting for host to start next round...
+                    </p>
+                )}
+            </div>
+        );
     }
 
     // Find the player's current match (first uncompleted match they're in)
@@ -385,11 +439,10 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
                     const allRoundMatchesComplete = updatedBracket.every(m => m.winner !== undefined);
 
                     if (allRoundMatchesComplete && currentRound < totalRounds - 1 && playerNames.length > 0) {
-                        // Generate next round
-                        const nextRound = generateRoundMatches(playerNames, currentRound + 1);
+                        // Round complete - wait for host to start next round
                         update(ref(db, `lobbies/${lobbyId}`), {
-                            bracket: nextRound,
-                            currentRound: currentRound + 1
+                            bracket: updatedBracket,
+                            roundComplete: true
                         });
                     } else if (allRoundMatchesComplete) {
                         // Tournament complete
