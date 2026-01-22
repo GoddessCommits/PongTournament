@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../firebase';
-import { ref, onValue, update, set, push, onDisconnect } from 'firebase/database';
+import { ref, onValue, update, set, push, onDisconnect, goOffline, goOnline } from 'firebase/database';
 import { OnlineManager } from './OnlineManager';
 import { PlayerSide } from '../engine/types';
 import { SpectatorView } from './SpectatorView';
@@ -35,42 +35,58 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const [roundComplete, setRoundComplete] = useState(false);
     const [completedMatchIds, setCompletedMatchIds] = useState<Set<string>>(new Set());
 
-    const [status, setStatus] = useState<'LOBBY' | 'STARTED'>('LOBBY');
+    const [status, setStatus] = useState<'LOBBY' | 'STARTED' | 'COMPLETE'>('LOBBY');
     const [players, setPlayers] = useState<{ id: string; name: string }[]>([]);
 
+    // Any P1 (Match Authority) calls this to report result
     const handleMatchEnd = (matchId: string, winnerName: string) => {
+        // 1. Update Local State (Optimistic)
         // Track locally to prevent infinite loop immediately
         setCompletedMatchIds(prev => new Set(prev).add(matchId));
 
-        const updatedBracket = bracket.map(m =>
-            m.id === matchId ? { ...m, winner: winnerName } : m
-        );
+        const matchIndex = bracket.findIndex(m => m.id === matchId);
+        if (matchIndex === -1) return;
+
+        const updatedBracket = [...bracket];
+        updatedBracket[matchIndex] = { ...updatedBracket[matchIndex], winner: winnerName };
         setBracket(updatedBracket);
 
-        if (!isHost) return;
+        // 2. Update Firebase (Specific Match Only)
+        // This allows multiple matches to finish simultaneously without overwriting each other
+        const updates: any = {};
+        updates[`bracket/${matchIndex}/winner`] = winnerName;
 
-        const allRoundMatchesComplete = updatedBracket.every(m => m.winner !== undefined);
+        // Clear gamestate to save space
         const gameStateRef = ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate`);
+        set(gameStateRef, null);
 
-        if (allRoundMatchesComplete && currentRound < totalRounds - 1) {
-            update(ref(db, `lobbies/${lobbyId}`), {
-                bracket: updatedBracket,
-                roundComplete: true
-            });
-            set(gameStateRef, null);
-        } else if (allRoundMatchesComplete) {
-            update(ref(db, `lobbies/${lobbyId}`), {
-                bracket: updatedBracket,
-                status: 'COMPLETE'
-            });
-            set(gameStateRef, null);
-        } else {
-            update(ref(db, `lobbies/${lobbyId}`), {
-                bracket: updatedBracket
-            });
-            set(gameStateRef, null);
-        }
+        update(ref(db, `lobbies/${lobbyId}`), updates);
     };
+
+    // Host Logic: Monitor Bracket for Round Completion
+    useEffect(() => {
+        if (!isHost || bracket.length === 0) return;
+        if (status === 'COMPLETE') return;
+
+        // Check if all matches in the current round are finished
+        // Note: 'bracket' in state is just the current round's matches
+        const allMatchesFinished = bracket.every(m => m.winner !== undefined);
+
+        // If all finished, but we haven't flagged it yet
+        if (allMatchesFinished && !roundComplete) {
+            console.log("All matches finished - Host advancing state");
+
+            if (currentRound < totalRounds - 1) {
+                update(ref(db, `lobbies/${lobbyId}`), {
+                    roundComplete: true
+                });
+            } else {
+                update(ref(db, `lobbies/${lobbyId}`), {
+                    status: 'COMPLETE'
+                });
+            }
+        }
+    }, [bracket, isHost, roundComplete, status, lobbyId, currentRound, totalRounds]);
 
     useEffect(() => {
 
@@ -145,6 +161,11 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             roundCompleteUnsub();
         };
     }, [lobbyId]);
+
+    // Reset completed matches when round changes
+    useEffect(() => {
+        setCompletedMatchIds(new Set());
+    }, [currentRound]);
 
     // Register Player in Lobby
     useEffect(() => {
@@ -335,14 +356,23 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
                         Waiting for host to start next round...
                     </p>
                 )}
+                <div style={{ marginTop: '2rem' }}>
+                    <button
+                        onClick={() => {
+                            goOffline(db);
+                            setTimeout(() => goOnline(db), 100);
+                        }}
+                        style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', background: '#555', marginRight: '1rem' }}
+                    >
+                        ⟳ Reconnect
+                    </button>
+                    <button onClick={onExit} style={{ background: '#333' }}>Leave</button>
+                </div>
             </div>
         );
     }
 
-    // Reset completed matches when round changes
-    useEffect(() => {
-        setCompletedMatchIds(new Set());
-    }, [currentRound]);
+
 
     // Find the player's current match (first uncompleted match they're in)
     const myMatch = bracket.find(m =>
@@ -351,9 +381,21 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     if (!myMatch) {
         // Player has no more matches - check if tournament is complete
+        // Check if all matches in the current *bracket* are done
         const allMatchesComplete = bracket.every(m => m.winner !== undefined);
 
         if (allMatchesComplete) {
+            // If matches are done but 'roundComplete' flag hasn't arrived/been set yet:
+            if (currentRound < totalRounds - 1) {
+                return (
+                    <div style={{ textAlign: 'center', marginTop: '4rem' }}>
+                        <h2>Round Finished!</h2>
+                        <p style={{ color: '#888' }}>Waiting for host to start next round...</p>
+                    </div>
+                );
+            }
+
+            // If it's the last round, then it is Tournament Results
             return (
                 <TournamentResults
                     bracket={bracket}

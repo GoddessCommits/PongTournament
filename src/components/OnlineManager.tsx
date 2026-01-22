@@ -1,178 +1,124 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { GameScreen } from './GameScreen';
 import { PlayerSide } from '../engine/types';
 import { db } from '../firebase';
 import { ref, onValue, update, onDisconnect } from 'firebase/database';
 import { GameEngine } from '../engine/GameEngine';
 
+// --- SOLID: Dependency Inversion (Interface for Sync Logic) ---
+interface SyncState {
+    ball: { x: number; y: number; vx: number; vy: number };
+    score: { left: number; right: number };
+    paddleLeft: number;
+    paddleRight?: number;
+}
+
 interface OnlineManagerProps {
     lobbyId: string;
     matchId: string;
-    playerSide: PlayerSide; // 'LEFT' is Host/Authority, 'RIGHT' is Guest/Peer
+    playerSide: PlayerSide;
     playerName: string;
     opponentName: string;
     onGameEnd: () => void;
     onMatchComplete?: (winner: PlayerSide) => void;
 }
 
-export const OnlineManager: React.FC<OnlineManagerProps> = ({
-    lobbyId,
-    matchId,
-    playerSide,
-    onGameEnd,
-    playerName,
-    opponentName,
-    onMatchComplete
-}) => {
-    // State for scores to pass down to UI
+export const OnlineManager: React.FC<OnlineManagerProps> = (props) => {
+    const { lobbyId, matchId, playerSide, playerName, opponentName, onGameEnd, onMatchComplete } = props;
     const [scores, setScores] = useState({ left: 0, right: 0 });
-    const [matchEnded, setMatchEnded] = useState(false);
 
-    // Instantiate Engine ONCE per match
-    const engine = React.useMemo(() => {
-        setMatchEnded(false);
-        const newEngine = new GameEngine({
-            onScore: (left, right) => setScores({ left, right }),
+    // 1. Initialize Engine
+    const engine = useMemo(() => {
+        const e = new GameEngine({
+            onScore: (l, r) => setScores({ left: l, right: r }),
             onMatchEnd: (winner) => {
-                if (matchEnded) return;
-                setMatchEnded(true);
                 onGameEnd();
-                if (onMatchComplete) onMatchComplete(winner);
+                onMatchComplete?.(winner);
             }
         });
 
-        // Enable AI if opponent is AI Bot - ONLY on host side (LEFT)
-        // This prevents conflicts where both players try to control the AI
         if (opponentName.includes('AI Bot') && playerSide === PlayerSide.LEFT) {
-            const aiSide = PlayerSide.RIGHT; // AI is always on right when playing vs host
-            newEngine.enableAI(aiSide);
-            console.log('AI enabled for match', matchId, 'opponent:', opponentName);
+            e.enableAI(PlayerSide.RIGHT);
         }
+        return e;
+    }, [matchId]);
 
-        return newEngine;
-    }, [matchId, opponentName, playerSide]); // Re-create engine when match changes
-
+    // 2. Networking Logic (Encapsulated)
     useEffect(() => {
-        if (!engine) return;
+        const gameStatePath = `lobbies/${lobbyId}/matches/${matchId}/gamestate`;
+        const gameStateRef = ref(db, gameStatePath);
+        const isHost = playerSide === PlayerSide.LEFT;
+        const isVsAI = opponentName.includes('AI Bot');
 
-        const lobbyRef = ref(db, `lobbies/${lobbyId}`);
-        const gameStateRef = ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate`);
+        // Cleanup on disconnect
+        onDisconnect(ref(db, `lobbies/${lobbyId}`)).remove();
 
-        // Disconnect cleanup
-        onDisconnect(lobbyRef).remove();
+        // SHARED: Sync Loop (Throttle logic)
+        const syncLoop = setInterval(() => {
+            if (engine.state !== 'PLAYING') return;
 
-        if (playerSide === PlayerSide.LEFT) {
-            // HOST LOGIC (AUTHORITY)
-            let lastSyncedBall = { x: 0, y: 0 };
-
-            const syncInterval = setInterval(() => {
-                if (engine.state === 'PLAYING') {
-                    // Only sync if ball moved significantly (reduces Firebase writes)
-                    const dx = Math.abs(engine.ball.x - lastSyncedBall.x);
-                    const dy = Math.abs(engine.ball.y - lastSyncedBall.y);
-
-                    if (dx > 2 || dy > 2) { // Threshold in pixels
-                        const updates: any = {
-                            ball: {
-                                x: engine.ball.x,
-                                y: engine.ball.y,
-                                vx: engine.ball.vx,
-                                vy: engine.ball.vy
-                            },
-                            score: engine.scores,
-                            paddleLeft: engine.leftPaddle.y
-                        };
-
-                        // IMPORTANT: Also sync right paddle if AI is playing
-                        // This allows spectators to see the AI paddle
-                        if (opponentName.includes('AI Bot')) {
-                            updates.paddleRight = engine.rightPaddle.y;
-                        }
-
-                        update(gameStateRef, updates);
-
-                        lastSyncedBall = { x: engine.ball.x, y: engine.ball.y };
-                    }
-                }
-            }, 50); // Reduced from 30ms to 50ms for better performance
-
-            // Listen for Guest Paddle - ONLY if opponent is NOT AI
-            // If opponent is AI, the host controls the AI paddle directly
-            let unsubscribe = () => { };
-            if (!opponentName.includes('AI Bot')) {
-                unsubscribe = onValue(ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate/paddleRight`), (snapshot) => {
-                    const val = snapshot.val();
-                    if (typeof val === 'number') {
-                        engine.rightPaddle.setPosition(val, engine.config);
-                    }
-                });
+            if (isHost) {
+                const updates: Partial<SyncState> = {
+                    ball: { ...engine.ball },
+                    score: engine.scores,
+                    paddleLeft: engine.leftPaddle.y
+                };
+                if (isVsAI) updates.paddleRight = engine.rightPaddle.y;
+                update(gameStateRef, updates);
+            } else {
+                // GUEST: Only sync their own paddle
+                update(gameStateRef, { paddleRight: engine.rightPaddle.y });
             }
+        }, 60); // 60ms is roughly 16 ticks/sec - standard for low-bandwidth sync
 
-            return () => {
-                clearInterval(syncInterval);
-                unsubscribe();
-            };
+        // INCOMING DATA: Listen for updates
+        const unsubscribe = onValue(gameStateRef, (snapshot) => {
+            const data: SyncState = snapshot.val();
+            if (!data) return;
 
-        } else {
-            // GUEST LOGIC
-            // Reduced sync interval for better performance
-            const syncInterval = setInterval(() => {
-                update(gameStateRef, {
-                    paddleRight: engine.rightPaddle.y
-                });
-            }, 50); // Reduced from 30ms to 50ms
+            if (isHost) {
+                // Host only listens for Guest paddle (if not AI)
+                if (!isVsAI && typeof data.paddleRight === 'number') {
+                    engine.rightPaddle.setPosition(data.paddleRight, engine.config);
+                }
+            } else {
+                // Guest applies Host's authority with Interpolation
+                if (data.ball) {
+                    const lerp = 0.8;
+                    engine.ball.x += (data.ball.x - engine.ball.x) * lerp;
+                    engine.ball.y += (data.ball.y - engine.ball.y) * lerp;
+                    engine.ball.vx = data.ball.vx;
+                    engine.ball.vy = data.ball.vy;
+                }
+                if (data.score) {
+                    engine.scores = data.score;
+                    setScores({ ...data.score });
 
-            // Listen for Host State with interpolation
-            const unsubscribe = onValue(gameStateRef, (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    if (data.ball) {
-                        // Interpolate ball position for smooth movement
-                        // Instead of teleporting, smoothly blend toward target position
-                        const lerpFactor = 0.85; // Increased from 0.6 for better responsiveness
-
-                        engine.ball.x += (data.ball.x - engine.ball.x) * lerpFactor;
-                        engine.ball.y += (data.ball.y - engine.ball.y) * lerpFactor;
-
-                        // Store velocity for visual consistency (guest doesn't run ball physics)
-                        engine.ball.vx = data.ball.vx;
-                        engine.ball.vy = data.ball.vy;
-                    }
-                    if (data.score) {
-                        engine.scores = data.score;
-                        // Also update local state for UI
-                        setScores(prev => (prev.left === data.score.left && prev.right === data.score.right) ? prev : data.score);
-                    }
-                    if (typeof data.paddleLeft === 'number') {
-                        engine.leftPaddle.setPosition(data.paddleLeft, engine.config);
+                    // Check for Game Over (Guest Side Trigger)
+                    if (engine.state === 'PLAYING') {
+                        if (data.score.left >= engine.config.winningScore) {
+                            engine.endGame(PlayerSide.LEFT);
+                        } else if (data.score.right >= engine.config.winningScore) {
+                            engine.endGame(PlayerSide.RIGHT);
+                        }
                     }
                 }
-            });
+                if (data.paddleLeft) engine.leftPaddle.setPosition(data.paddleLeft, engine.config);
+            }
+        });
 
-            return () => {
-                clearInterval(syncInterval);
-                unsubscribe();
-            };
-        }
-    }, [engine, lobbyId, matchId, playerSide, opponentName]);
-
-    // Display names from player's perspective
-    // Each player sees their own name on LEFT (the paddle they control)
-    // This matches the visual: both players control the left paddle on their screen
-    const p1Name = playerName;  // Player's name always on left
-    const p2Name = opponentName; // Opponent's name always on right
+        return () => {
+            clearInterval(syncLoop);
+            unsubscribe();
+        };
+    }, [engine, lobbyId, matchId, playerSide]);
 
     return (
         <GameScreen
-            onMatchEnd={(winner) => {
-                // This might be redundant if we handle it in constructor, 
-                // but GameScreen might keep using it for other things or it's harmless.
-                onGameEnd();
-                if (onMatchComplete) onMatchComplete(winner);
-            }}
-            isAiOpponent={false}
-            player1Name={p1Name}
-            player2Name={p2Name}
+            onMatchEnd={() => { }} // Handled by engine callback
+            isAiOpponent={opponentName.includes('AI Bot')}
+            player1Name={playerName}
+            player2Name={opponentName}
             engine={engine}
             externalScores={scores}
             playerSide={playerSide}
