@@ -7,6 +7,7 @@ import { GameEngine } from '../engine/GameEngine';
 
 interface OnlineManagerProps {
     lobbyId: string;
+    matchId: number;
     playerSide: PlayerSide; // 'LEFT' is Host/Authority, 'RIGHT' is Guest/Peer
     playerName: string;
     opponentName: string;
@@ -16,6 +17,7 @@ interface OnlineManagerProps {
 
 export const OnlineManager: React.FC<OnlineManagerProps> = ({
     lobbyId,
+    matchId,
     playerSide,
     onGameEnd,
     playerName,
@@ -35,9 +37,10 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
             }
         });
 
-        // Enable AI if opponent is AI Bot
-        if (opponentName.includes('AI Bot')) {
-            const aiSide = playerSide === PlayerSide.LEFT ? PlayerSide.RIGHT : PlayerSide.LEFT;
+        // Enable AI if opponent is AI Bot - ONLY on host side (LEFT)
+        // This prevents conflicts where both players try to control the AI
+        if (opponentName.includes('AI Bot') && playerSide === PlayerSide.LEFT) {
+            const aiSide = PlayerSide.RIGHT; // AI is always on right when playing vs host
             newEngine.enableAI(aiSide);
         }
 
@@ -48,7 +51,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
         if (!engine) return;
 
         const lobbyRef = ref(db, `lobbies/${lobbyId}`);
-        const gameStateRef = ref(db, `lobbies/${lobbyId}/gamestate`);
+        const gameStateRef = ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate`);
 
         // Disconnect cleanup
         onDisconnect(lobbyRef).remove();
@@ -89,7 +92,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
             }, 50); // Reduced from 30ms to 50ms for better performance
 
             // Listen for Guest Paddle
-            const unsubscribe = onValue(ref(db, `lobbies/${lobbyId}/gamestate/paddleRight`), (snapshot) => {
+            const unsubscribe = onValue(ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate/paddleRight`), (snapshot) => {
                 const val = snapshot.val();
                 if (typeof val === 'number') {
                     engine.rightPaddle.setPosition(val, engine.config);
@@ -142,7 +145,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                 unsubscribe();
             };
         }
-    }, [engine, lobbyId, playerSide]);
+    }, [engine, lobbyId, matchId, playerSide, opponentName]);
 
     const p1Name = playerSide === PlayerSide.LEFT ? playerName : opponentName;
     const p2Name = playerSide === PlayerSide.LEFT ? opponentName : playerName;

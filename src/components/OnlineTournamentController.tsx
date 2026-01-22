@@ -147,30 +147,27 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
     const handleStartTournament = () => {
         if (!isHost) return;
 
-        // Generate Bracket
+        // Generate Round-Robin Bracket (everyone plays everyone once)
         const names = players.map(p => p.name);
         if (names.length < 2) {
             alert("Need at least 2 players!");
             return;
         }
 
-        // Add AI filler
-        if (names.length % 2 !== 0) {
-            names.push("AI Bot");
-        }
-
-        const initialMatches: Match[] = [];
-        for (let i = 0; i < names.length; i += 2) {
-            initialMatches.push({
-                id: initialMatches.length,
-                p1: names[i],
-                p2: names[i + 1]
-            });
+        // Generate all possible match combinations (round-robin)
+        const roundRobinMatches: Match[] = [];
+        for (let i = 0; i < names.length; i++) {
+            for (let j = i + 1; j < names.length; j++) {
+                roundRobinMatches.push({
+                    id: roundRobinMatches.length,
+                    p1: names[i],
+                    p2: names[j]
+                });
+            }
         }
 
         update(ref(db, `lobbies/${lobbyId}`), {
-            bracket: initialMatches,
-            currentMatchIndex: 0,
+            bracket: roundRobinMatches,
             status: 'STARTED'
         });
     };
@@ -241,67 +238,79 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         return <div style={{ textAlign: 'center', marginTop: '2rem' }}>Initializing Bracket...</div>;
     }
 
-    const currentMatch = bracket[currentMatchIndex];
-    if (!currentMatch) return <div>Loading Match...</div>;
+    // Find the player's current match (first uncompleted match they're in)
+    const myMatch = bracket.find(m =>
+        !m.winner && (m.p1 === playerName || m.p2 === playerName)
+    );
 
-    const isMyMatch = currentMatch.p1 === playerName || currentMatch.p2 === playerName;
-    const isP1 = currentMatch.p1 === playerName;
+    if (!myMatch) {
+        // Player has no more matches - check if tournament is complete
+        const allMatchesComplete = bracket.every(m => m.winner !== undefined);
 
-    // View
-    if (isMyMatch) {
-        // Active Player
-        return (
-            <OnlineManager
-                lobbyId={lobbyId}
-                // If I am P1 -> LEFT host. If P2 -> RIGHT guest.
-                playerSide={isP1 ? PlayerSide.LEFT : PlayerSide.RIGHT}
-                playerName={playerName}
-                // Determine opponent name
-                opponentName={isP1 ? currentMatch.p2 : currentMatch.p1}
-                // Game End handled by OnlineManager internal UI flow usually,
-                // but we also need onMatchComplete
-                onGameEnd={() => { /* Do nothing, wait for bracket update */ }}
-
-                // Only P1 (Authority) writes result
-                onMatchComplete={(winnerSide: PlayerSide) => {
-                    const wName = winnerSide === PlayerSide.LEFT ? currentMatch.p1 : currentMatch.p2;
-                    if (isP1) {
-                        update(ref(db, `lobbies/${lobbyId}/matchResult`), { winner: wName, matchId: currentMatch.id });
-                    }
-                }}
-            />
-        );
-    } else {
-        // Spectator - only show if match is still ongoing
-        const isCurrentMatchComplete = currentMatch.winner !== undefined;
-
-        if (isCurrentMatchComplete) {
+        if (allMatchesComplete) {
             return (
-                <div style={{ textAlign: 'center', marginTop: '4rem' }}>
-                    <h2>Match Complete</h2>
-                    <p style={{ fontSize: '1.5rem', color: '#646cff' }}>
-                        {currentMatch.winner} won!
-                    </p>
-                    <p style={{ color: '#888', marginTop: '2rem' }}>
-                        Waiting for next match...
-                    </p>
-                </div>
+                <TournamentResults
+                    bracket={bracket}
+                    onExit={onExit}
+                />
             );
-        } else {
-            // Match is ongoing - show spectator view
+        }
+
+        // Player finished their matches but tournament not done - spectate
+        const ongoingMatch = bracket.find(m => !m.winner);
+        if (ongoingMatch) {
             return (
                 <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-                    <h2>Current Match</h2>
+                    <h2>Your Matches Complete!</h2>
+                    <p style={{ color: '#888', margin: '2rem 0' }}>
+                        Waiting for other matches to finish...
+                    </p>
+                    <h3>Ongoing Match</h3>
                     <div style={{ fontSize: '1.5rem', margin: '1rem 0', color: '#646cff' }}>
-                        {currentMatch.p1} vs {currentMatch.p2}
+                        {ongoingMatch.p1} vs {ongoingMatch.p2}
                     </div>
                     <SpectatorView
                         lobbyId={lobbyId}
-                        player1Name={currentMatch.p1}
-                        player2Name={currentMatch.p2}
+                        matchId={ongoingMatch.id}
+                        player1Name={ongoingMatch.p1}
+                        player2Name={ongoingMatch.p2}
                     />
                 </div>
             );
         }
+
+        return <div style={{ textAlign: 'center', marginTop: '2rem' }}>Waiting...</div>;
     }
+
+    const isP1 = myMatch.p1 === playerName;
+
+    // Active Player - render their match
+    return (
+        <OnlineManager
+            lobbyId={lobbyId}
+            matchId={myMatch.id}
+            // If I am P1 -> LEFT host. If P2 -> RIGHT guest.
+            playerSide={isP1 ? PlayerSide.LEFT : PlayerSide.RIGHT}
+            playerName={playerName}
+            // Determine opponent name
+            opponentName={isP1 ? myMatch.p2 : myMatch.p1}
+            // Game End handled by OnlineManager internal UI flow usually,
+            // but we also need onMatchComplete
+            onGameEnd={() => { /* Do nothing, wait for bracket update */ }}
+
+            // Only P1 (Authority) writes result
+            onMatchComplete={(winnerSide: PlayerSide) => {
+                const wName = winnerSide === PlayerSide.LEFT ? myMatch.p1 : myMatch.p2;
+                if (isP1) {
+                    // Update the specific match in the bracket
+                    const updatedBracket = bracket.map(m =>
+                        m.id === myMatch.id ? { ...m, winner: wName } : m
+                    );
+                    update(ref(db, `lobbies/${lobbyId}`), {
+                        bracket: updatedBracket
+                    });
+                }
+            }}
+        />
+    );
 };

@@ -5,12 +5,14 @@ import { ScoreDisplay } from './ScoreDisplay';
 
 interface SpectatorViewProps {
     lobbyId: string;
+    matchId: number;
     player1Name: string;
     player2Name: string;
 }
 
 export const SpectatorView: React.FC<SpectatorViewProps> = ({
     lobbyId,
+    matchId,
     player1Name,
     player2Name
 }) => {
@@ -20,7 +22,7 @@ export const SpectatorView: React.FC<SpectatorViewProps> = ({
 
     // Listen to game state from Firebase
     useEffect(() => {
-        const gameStateRef = ref(db, `lobbies/${lobbyId}/gamestate`);
+        const gameStateRef = ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate`);
         const unsubscribe = onValue(gameStateRef, (snapshot) => {
             const data = snapshot.val();
             if (data) {
@@ -30,7 +32,7 @@ export const SpectatorView: React.FC<SpectatorViewProps> = ({
         return () => {
             unsubscribe();
         };
-    }, [lobbyId]);
+    }, [lobbyId, matchId]);
 
     // Render game state on canvas
     useEffect(() => {
