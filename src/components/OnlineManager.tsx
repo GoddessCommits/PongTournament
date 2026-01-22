@@ -27,29 +27,22 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
 
     // Instantiate Engine ONCE
     const engine = React.useMemo(() => {
-        return new GameEngine({
+        const newEngine = new GameEngine({
             onScore: (left, right) => setScores({ left, right }),
             onMatchEnd: (winner) => {
-                // We'll handle this via props/refs if needed, but OnlineManager controls flow mostly via useEffect below?
-                // Actually, onMatchEnd is passed to GameScreen which calls props.
-                // But since WE own the engine, we should probably handle it or let GameScreen handle it?
-                // GameScreen calls props.onMatchEnd when it receives this event...
-                // WAIT: If we pass engine to GameScreen, GameScreen attaches listeners?
-                // NO. GameScreen attaches CANVAS.
-                // The Engine events are defined HERE in constructor.
-                // So WE need to call the props.
-
-                // However, GameScreen ALSO takes onMatchEnd prop.
-                // But GameScreen only calls onMatchEnd if IT created the engine?
-                // No, let's check GameScreen:
-                // It calls `activeEngine = ...`
-                // It does NOT re-attach listeners if external engine.
-                // So WE must call the prop here.
                 onGameEnd();
                 if (onMatchComplete) onMatchComplete(winner);
             }
         });
-    }, []); // Empty deps = once per component lifecycle
+
+        // Enable AI if opponent is AI Bot
+        if (opponentName.includes('AI Bot')) {
+            const aiSide = playerSide === PlayerSide.LEFT ? PlayerSide.RIGHT : PlayerSide.LEFT;
+            newEngine.enableAI(aiSide);
+        }
+
+        return newEngine;
+    }, [opponentName, playerSide]); // Added dependencies
 
     useEffect(() => {
         if (!engine) return;
@@ -71,7 +64,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                     const dy = Math.abs(engine.ball.y - lastSyncedBall.y);
 
                     if (dx > 2 || dy > 2) { // Threshold in pixels
-                        update(gameStateRef, {
+                        const updates: any = {
                             ball: {
                                 x: engine.ball.x,
                                 y: engine.ball.y,
@@ -80,7 +73,15 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                             },
                             score: engine.scores,
                             paddleLeft: engine.leftPaddle.y
-                        });
+                        };
+
+                        // IMPORTANT: Also sync right paddle if AI is playing
+                        // This allows spectators to see the AI paddle
+                        if (opponentName.includes('AI Bot')) {
+                            updates.paddleRight = engine.rightPaddle.y;
+                        }
+
+                        update(gameStateRef, updates);
 
                         lastSyncedBall = { x: engine.ball.x, y: engine.ball.y };
                     }
@@ -116,7 +117,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                     if (data.ball) {
                         // Interpolate ball position for smooth movement
                         // Instead of teleporting, smoothly blend toward target position
-                        const lerpFactor = 0.6; // Increased from 0.3 for better responsiveness
+                        const lerpFactor = 0.85; // Increased from 0.6 for better responsiveness
 
                         engine.ball.x += (data.ball.x - engine.ball.x) * lerpFactor;
                         engine.ball.y += (data.ball.y - engine.ball.y) * lerpFactor;

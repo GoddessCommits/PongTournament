@@ -3,7 +3,8 @@ import { db } from '../firebase';
 import { ref, onValue, update, set, push, onDisconnect } from 'firebase/database';
 import { OnlineManager } from './OnlineManager';
 import { PlayerSide } from '../engine/types';
-
+import { SpectatorView } from './SpectatorView';
+import { TournamentResults } from './TournamentResults';
 interface OnlineTournamentControllerProps {
     lobbyId: string;
     playerName: string;
@@ -229,10 +230,10 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     if (tournamentWinner) {
         return (
-            <div style={{ textAlign: 'center', marginTop: '4rem' }}>
-                <h1>🏆 WINNER: {tournamentWinner} 🏆</h1>
-                <button onClick={onExit}>Return to Lobby</button>
-            </div>
+            <TournamentResults
+                bracket={bracket}
+                onExit={onExit}
+            />
         );
     }
 
@@ -271,15 +272,36 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             />
         );
     } else {
-        // Sepctator
-        return (
-            <div style={{ textAlign: 'center', marginTop: '4rem' }}>
-                <h2>Current Match</h2>
-                <div style={{ fontSize: '2rem', margin: '2rem' }}>
-                    {currentMatch.p1} vs {currentMatch.p2}
+        // Spectator - only show if match is still ongoing
+        const isCurrentMatchComplete = currentMatch.winner !== undefined;
+
+        if (isCurrentMatchComplete) {
+            return (
+                <div style={{ textAlign: 'center', marginTop: '4rem' }}>
+                    <h2>Match Complete</h2>
+                    <p style={{ fontSize: '1.5rem', color: '#646cff' }}>
+                        {currentMatch.winner} won!
+                    </p>
+                    <p style={{ color: '#888', marginTop: '2rem' }}>
+                        Waiting for next match...
+                    </p>
                 </div>
-                <div style={{ color: '#888' }}>Spectating...</div>
-            </div>
-        );
+            );
+        } else {
+            // Match is ongoing - show spectator view
+            return (
+                <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+                    <h2>Current Match</h2>
+                    <div style={{ fontSize: '1.5rem', margin: '1rem 0', color: '#646cff' }}>
+                        {currentMatch.p1} vs {currentMatch.p2}
+                    </div>
+                    <SpectatorView
+                        lobbyId={lobbyId}
+                        player1Name={currentMatch.p1}
+                        player2Name={currentMatch.p2}
+                    />
+                </div>
+            );
+        }
     }
 };
