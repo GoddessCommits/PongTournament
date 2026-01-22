@@ -395,6 +395,11 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     const isP1 = myMatch.p1 === playerName;
 
+    // Safety check: don't render if match already has a winner
+    if (myMatch.winner) {
+        return <div style={{ textAlign: 'center', marginTop: '2rem' }}>Match complete, waiting for round...</div>;
+    }
+
     // Show match completion screen if match just finished
     if (matchJustCompleted) {
         return (

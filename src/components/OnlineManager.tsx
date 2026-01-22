@@ -92,13 +92,17 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
                 }
             }, 50); // Reduced from 30ms to 50ms for better performance
 
-            // Listen for Guest Paddle
-            const unsubscribe = onValue(ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate/paddleRight`), (snapshot) => {
-                const val = snapshot.val();
-                if (typeof val === 'number') {
-                    engine.rightPaddle.setPosition(val, engine.config);
-                }
-            });
+            // Listen for Guest Paddle - ONLY if opponent is NOT AI
+            // If opponent is AI, the host controls the AI paddle directly
+            let unsubscribe = () => { };
+            if (!opponentName.includes('AI Bot')) {
+                unsubscribe = onValue(ref(db, `lobbies/${lobbyId}/matches/${matchId}/gamestate/paddleRight`), (snapshot) => {
+                    const val = snapshot.val();
+                    if (typeof val === 'number') {
+                        engine.rightPaddle.setPosition(val, engine.config);
+                    }
+                });
+            }
 
             return () => {
                 clearInterval(syncInterval);
