@@ -166,6 +166,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = ({
             player2Name={p2Name}
             engine={engine}
             externalScores={scores}
+            playerSide={playerSide}
         />
     );
 };
