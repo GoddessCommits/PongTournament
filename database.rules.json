@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "lobbies": {
+      "$lobbyId": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}
