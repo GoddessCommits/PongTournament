@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GameScreen } from './GameScreen';
 import { PlayerSide } from '../engine/types';
 import { db } from '../firebase';
@@ -26,32 +26,42 @@ interface OnlineManagerProps {
 export const OnlineManager: React.FC<OnlineManagerProps> = (props) => {
     const { lobbyId, matchId, playerSide, playerName, opponentName, onGameEnd, onMatchComplete } = props;
     const [scores, setScores] = useState({ left: 0, right: 0 });
+    const [engine, setEngine] = useState<GameEngine | null>(null);
 
-    // 1. Initialize Engine
-    const engine = useMemo(() => {
+    // Keep callbacks in refs to avoid stale closures
+    const onGameEndRef = useRef(onGameEnd);
+    const onMatchCompleteRef = useRef(onMatchComplete);
+    useEffect(() => { onGameEndRef.current = onGameEnd; }, [onGameEnd]);
+    useEffect(() => { onMatchCompleteRef.current = onMatchComplete; }, [onMatchComplete]);
+
+    // 1. Initialize Engine (in effect to safely access refs)
+    useEffect(() => {
         const e = new GameEngine({
             onScore: (l, r) => setScores({ left: l, right: r }),
             onMatchEnd: (winner) => {
-                onGameEnd();
-                onMatchComplete?.(winner);
+                onGameEndRef.current();
+                onMatchCompleteRef.current?.(winner);
             }
         });
 
         if (opponentName.includes('AI Bot') && playerSide === PlayerSide.LEFT) {
             e.enableAI(PlayerSide.RIGHT);
         }
-        return e;
-    }, [matchId]);
+        setEngine(e);
+    }, [matchId, opponentName, playerSide]);
 
     // 2. Networking Logic (Encapsulated)
     useEffect(() => {
+        if (!engine) return;
+
         const gameStatePath = `lobbies/${lobbyId}/matches/${matchId}/gamestate`;
         const gameStateRef = ref(db, gameStatePath);
         const isHost = playerSide === PlayerSide.LEFT;
         const isVsAI = opponentName.includes('AI Bot');
 
-        // Cleanup on disconnect
-        onDisconnect(ref(db, `lobbies/${lobbyId}`)).remove();
+        // Cleanup on disconnect (store ref so we can cancel in cleanup)
+        const disconnectRef = onDisconnect(ref(db, `lobbies/${lobbyId}`));
+        disconnectRef.remove();
 
         // SHARED: Sync Loop (Throttle logic)
         const syncLoop = setInterval(() => {
@@ -110,8 +120,9 @@ export const OnlineManager: React.FC<OnlineManagerProps> = (props) => {
         return () => {
             clearInterval(syncLoop);
             unsubscribe();
+            disconnectRef.cancel();
         };
-    }, [engine, lobbyId, matchId, playerSide]);
+    }, [engine, lobbyId, matchId, playerSide, opponentName]);
 
     return (
         <GameScreen
@@ -119,7 +130,7 @@ export const OnlineManager: React.FC<OnlineManagerProps> = (props) => {
             isAiOpponent={opponentName.includes('AI Bot')}
             player1Name={playerName}
             player2Name={opponentName}
-            engine={engine}
+            engine={engine ?? undefined}
             externalScores={scores}
             playerSide={playerSide}
         />
