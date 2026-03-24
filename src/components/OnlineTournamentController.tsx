@@ -118,11 +118,11 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
         const playersUnsub = onValue(ref(db, `lobbies/${lobbyId}/players`), (snapshot) => {
             const data = snapshot.val();
             if (data) {
-                const pList = Object.values(data) as { name: string }[];
-                // Sort to ensure deterministic order for JSON.stringify comparison
-                pList.sort((a, b) => a.name.localeCompare(b.name));
-
-                const newPlayers = pList.map((p, i) => ({ id: `p${i}`, name: p.name }));
+                // Use Firebase push keys as stable IDs to avoid dedup collisions
+                // when players share the same name
+                const entries = Object.entries(data) as [string, { name: string }][];
+                entries.sort((a, b) => a[0].localeCompare(b[0]));
+                const newPlayers = entries.map(([key, p]) => ({ id: key, name: p.name }));
                 setPlayers(prev => JSON.stringify(prev) !== JSON.stringify(newPlayers) ? newPlayers : prev);
             }
         });
@@ -169,6 +169,11 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
 
     // Register Player in Lobby
     useEffect(() => {
+        // Host: Initialize lobby structure first so it exists when guests join
+        if (isHost) {
+            set(ref(db, `lobbies/${lobbyId}/status`), 'LOBBY');
+        }
+
         const playersRef = ref(db, `lobbies/${lobbyId}/players`);
         const newPlayerRef = push(playersRef);
 
@@ -185,7 +190,7 @@ export const OnlineTournamentController: React.FC<OnlineTournamentControllerProp
             // Also remove if component unmounts (e.g. user leaves manually)
             set(newPlayerRef, null);
         };
-    }, [lobbyId, playerName]);
+    }, [lobbyId, playerName, isHost]);
 
     // Start Tournament (Host Only)
     const handleStartTournament = () => {
